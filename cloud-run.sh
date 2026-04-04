@@ -232,7 +232,6 @@ show_kv "Resources:" "${CPU} vCPU / ${MEMORY}"
 # =================== Step 7: Timezone Setup (Thailand & 3.5h Lab) ===================
 show_step "06" "Deployment Schedule"
 
-# ထိုင်းစံတော်ချိန် (Asia/Bangkok) နှင့် Lab အချိန် (၃ နာရီ ၃၀ မိနစ် = ၂၁၀ မိနစ်) အတိအကျ တွက်ချက်ခြင်း
 export TZ="Asia/Bangkok"
 START_EPOCH="$(date +%s)"
 END_EPOCH="$(( START_EPOCH + 210*60 ))" 
@@ -255,57 +254,22 @@ done
 show_success "Required APIs enabled"
 
 # =================== Step 9: Prepare Custom Files ===================
-show_step "08" "Building Custom FNET VPN Server"
+show_step "08" "Fetching FNET Repo Files"
 
 BUILD_DIR=$(mktemp -d)
 cd "$BUILD_DIR"
 
+show_info "Downloading configuration from nds69/gcp-v2ray..."
+curl -sO https://raw.githubusercontent.com/nds69/gcp-v2ray/main/config.json
+curl -sO https://raw.githubusercontent.com/nds69/gcp-v2ray/main/Dockerfile
+show_success "Files downloaded successfully."
+
 VLESS_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 show_info "Generated New UUID: ${C_FNET_YELLOW}${VLESS_UUID}${RESET}"
 
-cat << EOF > config.json
-{
-  "log": { "loglevel": "warning", "access": "/dev/stdout", "error": "/dev/stderr" },
-  "inbounds": [
-    {
-      "port": 8080,
-      "protocol": "vless",
-      "settings": {
-        "clients": [ { "id": "${VLESS_UUID}", "flow": "" } ],
-        "decryption": "none"
-      },
-      "streamSettings": {
-        "network": "ws",
-        "wsSettings": { "path": "/@fnetvpn", "headers": { "Host": "" } },
-        "security": "none"
-      }
-    }
-  ],
-  "outbounds": [
-    { "protocol": "freedom", "settings": {}, "tag": "direct" },
-    { "protocol": "blackhole", "settings": {}, "tag": "blocked" }
-  ],
-  "routing": {
-    "domainStrategy": "IPIfNonMatch",
-    "rules": [
-      {
-        "type": "field", "outboundTag": "direct",
-        "domain": ["geosite:google", "geosite:facebook", "geosite:youtube", "geosite:cloudflare"]
-      },
-      { "type": "field", "outboundTag": "direct", "ip": ["geoip:private", "8.8.8.8/32", "1.1.1.1/32"] },
-      { "type": "field", "outboundTag": "blocked", "domain": ["geosite:category-ads-all"] },
-      { "type": "field", "outboundTag": "direct", "network": "udp,tcp" }
-    ]
-  }
-}
-EOF
-
-cat << 'EOF' > Dockerfile
-FROM teddysun/xray:latest
-COPY config.json /etc/xray/config.json
-EXPOSE 8080
-EOF
-show_success "Custom Server Files generated in temporary build path."
+# Replace the static UUID in config.json with the newly generated one
+sed -i "s/ba0e3984-ccc9-48a3-8074-b2f507f41ce8/${VLESS_UUID}/g" config.json
+show_success "New UUID injected into config.json."
 
 # =================== Step 10: Deploy ===================
 show_step "09" "Cloud Run Source Deployment"
