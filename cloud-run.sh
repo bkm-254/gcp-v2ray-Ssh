@@ -203,17 +203,10 @@ show_step "03" "Protocol Selection"
 show_success "Protocol: ${C_FNET_CYAN}VLESS WebSocket (FNET Custom Server)${RESET}"
 
 # =================== Step 4: Region ===================
-show_step "04" "Region Selection"
-echo "  1) ${C_FNET_BLUE}🇺🇸 United States${RESET} (us-central1) - ${C_FNET_GREEN}Recommended${RESET}"
-echo "  2) ${C_FNET_BLUE}🇸🇬 Singapore${RESET} (asia-southeast1)"
-echo "  3) ${C_FNET_BLUE}🇯🇵 Japan${RESET} (asia-northeast1)"
-printf "\n"
-read -rp "${C_FNET_GREEN}Choose region [1-3, default 1]:${RESET} " _r || true
-case "${_r:-1}" in
-  2) REGION="asia-southeast1" ;;
-  3) REGION="asia-northeast1" ;;
-  *) REGION="us-central1" ;;
-esac
+show_step "04" "Region Selection (Qwiklabs Optimization)"
+# Qwiklabs အတွက် Error မတက်အောင် US Region သာ အလိုအလျောက် ရွေးချယ်ပေးသည်
+REGION="us-central1"
+show_info "Auto-selected Region to prevent Qwiklabs limits."
 show_success "Selected Region: ${C_FNET_CYAN}$REGION${RESET}"
 
 # =================== Step 5 & 6: Resources ===================
@@ -254,15 +247,14 @@ done
 show_success "Required APIs enabled"
 
 # =================== Step 9: Prepare Custom Files ===================
-show_step "08" "Fetching FNET Repo Files"
+show_step "08" "Fetching Config & Preparing Fast Server"
 
 BUILD_DIR=$(mktemp -d)
 cd "$BUILD_DIR"
 
 show_info "Downloading configuration from nds69/gcp-v2ray..."
 curl -sO https://raw.githubusercontent.com/nds69/gcp-v2ray/main/config.json
-curl -sO https://raw.githubusercontent.com/nds69/gcp-v2ray/main/Dockerfile
-show_success "Files downloaded successfully."
+show_success "config.json downloaded successfully."
 
 VLESS_UUID=$(uuidgen 2>/dev/null || cat /proc/sys/kernel/random/uuid)
 show_info "Generated New UUID: ${C_FNET_YELLOW}${VLESS_UUID}${RESET}"
@@ -271,9 +263,17 @@ show_info "Generated New UUID: ${C_FNET_YELLOW}${VLESS_UUID}${RESET}"
 sed -i "s/ba0e3984-ccc9-48a3-8074-b2f507f41ce8/${VLESS_UUID}/g" config.json
 show_success "New UUID injected into config.json."
 
+# Generate a Fast Dockerfile (Pre-built image to save time)
+show_info "Generating Fast Dockerfile for quick deployment..."
+cat << 'EOF' > Dockerfile
+FROM teddysun/xray:latest
+COPY config.json /etc/xray/config.json
+EXPOSE 8080
+EOF
+
 # =================== Step 10: Deploy ===================
 show_step "09" "Cloud Run Source Deployment"
-show_info "Uploading and building FNET custom server..."
+show_info "Deploying FNET fast server to Cloud Run..."
 
 DEPLOY_CMD=(
   gcloud run deploy "$SERVICE"
@@ -326,7 +326,7 @@ if [[ -n "${TELEGRAM_TOKEN:-}" && ${#CHAT_ID_ARR[@]} -gt 0 ]]; then
 ✅ <b>FNET VPN Server Deployed</b>
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 <blockquote>🌍 <b>Region:</b> ${REGION}
-📡 <b>Protocol:</b> VLESS WS (Custom)
+📡 <b>Protocol:</b> VLESS WS (Fast Build)
 🔗 <b>Endpoint:</b> <a href="${SERVICE_URL}">${SERVICE_URL}</a></blockquote>
 🔑 <b>VLESS Configuration:</b>
 <pre><code>${URI}</code></pre>
