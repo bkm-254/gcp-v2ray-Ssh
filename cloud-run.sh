@@ -204,7 +204,6 @@ show_success "Protocol: ${C_FNET_CYAN}VLESS WebSocket (FNET Custom Server)${RESE
 
 # =================== Step 4: Region ===================
 show_step "04" "Region Selection (Qwiklabs Optimization)"
-# Qwiklabs အတွက် Error မတက်အောင် US Region သာ အလိုအလျောက် ရွေးချယ်ပေးသည်
 REGION="us-central1"
 show_info "Auto-selected Region to prevent Qwiklabs limits."
 show_success "Selected Region: ${C_FNET_CYAN}$REGION${RESET}"
@@ -222,19 +221,35 @@ SERVICE="${_svc:-$SERVICE}"
 show_kv "Service Name:" "$SERVICE"
 show_kv "Resources:" "${CPU} vCPU / ${MEMORY}"
 
-# =================== Step 7: Timezone Setup (Thailand & 3.5h Lab) ===================
-show_step "06" "Deployment Schedule"
+# =================== Step 7: Timezone Setup (Exact Match) ===================
+show_step "06" "Deployment Schedule (Exact Match)"
+
+printf "\n${C_FNET_GRAY}💡 Qwiklabs ပေါ်က ကျန်နေတဲ့ အချိန်ကို ကြည့်ပြီး အောက်မှာ ထည့်ပေးပါ။ (ဥပမာ - 01:21)${RESET}\n"
+read -rp "${C_FNET_GREEN}⏳ စခရင်မ်ပေါ်မှာ ပြနေတဲ့ အချိန်ကို ရိုက်ထည့်ပါ (H:M):${RESET} " REMAINING_TIME || true
 
 export TZ="Asia/Bangkok"
 START_EPOCH="$(date +%s)"
-END_EPOCH="$(( START_EPOCH + 210*60 ))" 
+
+# အချိန်တွက်ချက်ခြင်း (User ရိုက်ထည့်တဲ့ အချိန်ပေါ်မူတည်ပြီး တွက်မည်)
+if [[ -z "$REMAINING_TIME" || ! "$REMAINING_TIME" =~ ^[0-9]+:[0-9]+$ ]]; then
+  show_warning "Format အမှား! ပုံမှန် 3 နာရီဖြင့်သာ ဆက်လက်တွက်ချက်ပါမည်။"
+  ADD_SECS=$(( 3 * 3600 ))
+else
+  HRS=$(echo "$REMAINING_TIME" | cut -d: -f1 | sed 's/^0*//')
+  MINS=$(echo "$REMAINING_TIME" | cut -d: -f2 | sed 's/^0*//')
+  [[ -z "$HRS" ]] && HRS=0
+  [[ -z "$MINS" ]] && MINS=0
+  ADD_SECS=$(( HRS * 3600 + MINS * 60 ))
+  show_success "အချိန်အတိအကျ တွက်ချက်ပြီးပါပြီ။ (${HRS} နာရီ ${MINS} မိနစ်)"
+fi
+
+END_EPOCH=$(( START_EPOCH + ADD_SECS ))
 fmt_dt(){ date -d @"$1" "+%d.%m.%Y %I:%M %p"; }
 START_LOCAL="$(fmt_dt "$START_EPOCH")"
 END_LOCAL="$(fmt_dt "$END_EPOCH")"
 
 show_kv "Start Time:" "$START_LOCAL (Thai Time)"
 show_kv "End Time:" "$END_LOCAL (Thai Time)"
-show_kv "Lab Duration:" "3 Hours 30 Minutes"
 
 # =================== Step 8: Enable APIs ===================
 show_step "07" "GCP API Enablement"
