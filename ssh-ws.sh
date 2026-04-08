@@ -38,7 +38,7 @@ show_fnet_banner() {
   printf "║   ██║     ██║ ╚████║███████╗   ██║        ╚████╔╝ ██║     ██║ ╚████║ ║\n"
   printf "║   ╚═╝     ╚═╝  ╚═══╝╚══════╝   ╚═╝         ╚═══╝  ╚═╝     ╚═╝  ╚═══╝ ║\n"
   printf "║                                                                  ║\n"
-  printf "║         ${C_FNET_YELLOW}🚀 SSH over WEBSOCKET SYSTEM => VERSION - 2.2          ${C_FNET_RED}║\n"
+  printf "║         ${C_FNET_YELLOW}🚀 SSH over WEBSOCKET SYSTEM => VERSION - 2.3          ${C_FNET_RED}║\n"
   printf "║         ${C_FNET_GREEN}⚡ Powered by FNET Developer                           ${C_FNET_RED}║\n"
   printf "╚══════════════════════════════════════════════════════════════════╝${RESET}\n\n"
 }
@@ -100,7 +100,7 @@ fi
 END_LOCAL="$(date -d @"$(( START_EPOCH + ADD_SECS ))" "+%I:%M %p")"
 show_success "Expire Time set to: $END_LOCAL"
 
-# =================== Step 3: Enable APIs (CRITICAL FIX) ===================
+# =================== Step 3: Enable APIs ===================
 show_step "03" "GCP API Enablement"
 APIS_TO_ENABLE=("run.googleapis.com" "cloudbuild.googleapis.com" "artifactregistry.googleapis.com")
 for api in "${APIS_TO_ENABLE[@]}"; do
@@ -111,29 +111,49 @@ done
 show_success "Required APIs enabled successfully."
 
 # =================== Step 4: Build Server ===================
-show_step "04" "Building SSH WS Proxy Server"
+show_step "04" "Building SSH WS Proxy Server (Python 3.12 Fix)"
 BUILD_DIR=$(mktemp -d); cd "$BUILD_DIR"
+
+# Python 3.12 Compatible Proxy Script
 cat << 'EOF' > proxy.py
-import asyncio, websockets
-async def forward(websocket, path):
-    try: reader, writer = await asyncio.open_connection('127.0.0.1', 22)
-    except: return
+import asyncio, websockets, os
+
+async def forward(websocket, path=""):
+    try:
+        reader, writer = await asyncio.open_connection('127.0.0.1', 22)
+    except Exception:
+        return
+
     async def ws_to_tcp():
         try:
-            async for message in websocket: writer.write(message); await writer.drain()
-        except: pass
-        finally: writer.close()
+            async for message in websocket:
+                writer.write(message)
+                await writer.drain()
+        except Exception:
+            pass
+        finally:
+            writer.close()
+
     async def tcp_to_ws():
         try:
             while True:
                 data = await reader.read(4096)
                 if not data: break
                 await websocket.send(data)
-        except: pass
-        finally: await websocket.close()
+        except Exception:
+            pass
+        finally:
+            await websocket.close()
+
     await asyncio.gather(ws_to_tcp(), tcp_to_ws())
-start_server = websockets.serve(forward, "0.0.0.0", 8080)
-asyncio.get_event_loop().run_until_complete(start_server); asyncio.get_event_loop().run_forever()
+
+async def main():
+    port = int(os.environ.get("PORT", 8080))
+    async with websockets.serve(forward, "0.0.0.0", port):
+        await asyncio.Future()  # Run forever
+
+if __name__ == "__main__":
+    asyncio.run(main())
 EOF
 
 cat << 'EOF' > Dockerfile
