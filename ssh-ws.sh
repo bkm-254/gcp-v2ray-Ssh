@@ -38,7 +38,7 @@ show_fnet_banner() {
   printf "║   ██║     ██║ ╚████║███████╗   ██║        ╚████╔╝ ██║     ██║ ╚████║ ║\n"
   printf "║   ╚═╝     ╚═╝  ╚═══╝╚══════╝   ╚═╝         ╚═══╝  ╚═╝     ╚═╝  ╚═══╝ ║\n"
   printf "║                                                                  ║\n"
-  printf "║         ${C_FNET_YELLOW}🚀 SSH over WEBSOCKET SYSTEM => VERSION - 1.0          ${C_FNET_RED}║\n"
+  printf "║         ${C_FNET_YELLOW}🚀 SSH over WEBSOCKET SYSTEM => VERSION - 2.0          ${C_FNET_RED}║\n"
   printf "║         ${C_FNET_GREEN}⚡ Powered by FNET Developer                           ${C_FNET_RED}║\n"
   printf "╚══════════════════════════════════════════════════════════════════╝${RESET}\n\n"
 }
@@ -56,10 +56,9 @@ run_with_progress() {
   if [[ -t 1 ]]; then
     printf "\e[?25l"; ("$@" 2>&1 | tee "$temp_file") >>"$LOG_FILE" 2>&1 & local pid=$!; local pct=5
     while kill -0 "$pid" 2>/dev/null; do
-      pct=$(( pct + $(( (RANDOM % 9) + 2 )) )); (( pct > 95 )) && pct=95
+      pct=$(( pct + $(( (RANDOM % 5) + 2 )) )); (( pct > 98 )) && pct=98
       printf "\r${C_FNET_PURPLE}⟳${RESET} ${C_FNET_CYAN}%s...${RESET} [${C_FNET_YELLOW}%s%%${RESET}]" "$label" "$pct"
-      if grep -i "error\|failed\|denied" "$temp_file" 2>/dev/null | grep -v "grep" | head -1; then break; fi
-      sleep 0.5
+      sleep 0.8
     done
     wait "$pid" 2>/dev/null || true; local rc=$?
     printf "\r\e[K"
@@ -71,147 +70,113 @@ run_with_progress() {
 
 show_fnet_banner
 
-# =================== Step 1 & 2 & 3 & 4 : Initial Setup ===================
-show_step "01" "GCP & Protocol Setup"
-PROJECT="$(gcloud config get-value project 2>/dev/null || true)"
-PROJECT_NUMBER="$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')" || true
-REGION="us-central1"
-SERVICE="fnet-ssh-ws"
-show_success "Protocol: ${C_FNET_CYAN}SSH over WebSocket${RESET}"
-show_success "Region: ${C_FNET_CYAN}$REGION${RESET}"
+# =================== Step 1: Telegram Config ===================
+show_step "01" "Telegram Configuration Setup"
+TELEGRAM_TOKEN=""
+TELEGRAM_CHAT_ID=""
+read -rp "${C_FNET_GREEN}🤖 Enter Telegram Bot Token:${RESET} " TELEGRAM_TOKEN || true
+read -rp "${C_FNET_GREEN}👤 Enter Telegram Chat ID:${RESET} " TELEGRAM_CHAT_ID || true
 
-# =================== Step 5: Timezone Setup ===================
-show_step "02" "Deployment Schedule (Exact Match)"
-printf "\n${C_FNET_GRAY}💡 Qwiklabs ပေါ်က ကျန်နေတဲ့ အချိန်ကို ကြည့်ပြီး အောက်မှာ ထည့်ပေးပါ။ (ဥပမာ - 01:21)${RESET}\n"
-read -rp "${C_FNET_GREEN}⏳ စခရင်မ်ပေါ်မှာ ပြနေတဲ့ အချိန်ကို ရိုက်ထည့်ပါ (H:M):${RESET} " REMAINING_TIME || true
+tg_send(){
+  local text="$1"
+  if [[ -z "${TELEGRAM_TOKEN:-}" || -z "${TELEGRAM_CHAT_ID:-}" ]]; then return 0; fi
+  curl -s -S -X POST "https://api.telegram.org/bot${TELEGRAM_TOKEN}/sendMessage" \
+    -d "chat_id=${TELEGRAM_CHAT_ID}" --data-urlencode "text=${text}" -d "parse_mode=HTML" \
+    >>"$LOG_FILE" 2>&1 || true
+}
+
+# =================== Step 2: Timezone Setup ===================
+show_step "02" "Lab Timer Setup"
+printf "\n${C_FNET_GRAY}💡 Qwiklabs ပေါ်က ကျန်နေတဲ့ အချိန်ကို ကြည့်ပြီး ထည့်ပေးပါ။ (ဥပမာ - 05:10)${RESET}\n"
+read -rp "${C_FNET_GREEN}⏳ Remaining Time (H:M):${RESET} " REMAINING_TIME || true
 export TZ="Asia/Bangkok"
 START_EPOCH="$(date +%s)"
 if [[ -z "$REMAINING_TIME" || ! "$REMAINING_TIME" =~ ^[0-9]+:[0-9]+$ ]]; then
   ADD_SECS=$(( 3 * 3600 ))
 else
   HRS=$(echo "$REMAINING_TIME" | cut -d: -f1 | sed 's/^0*//'); MINS=$(echo "$REMAINING_TIME" | cut -d: -f2 | sed 's/^0*//')
-  [[ -z "$HRS" ]] && HRS=0; [[ -z "$MINS" ]] && MINS=0
-  ADD_SECS=$(( HRS * 3600 + MINS * 60 ))
-  show_success "အချိန်အတိအကျ တွက်ချက်ပြီးပါပြီ။ (${HRS} နာရီ ${MINS} မိနစ်)"
+  ADD_SECS=$(( ${HRS:-0} * 3600 + ${MINS:-0} * 60 ))
 fi
-END_EPOCH=$(( START_EPOCH + ADD_SECS ))
-fmt_dt(){ date -d @"$1" "+%d.%m.%Y %I:%M %p"; }
-START_LOCAL="$(fmt_dt "$START_EPOCH")"
-END_LOCAL="$(fmt_dt "$END_EPOCH")"
-show_kv "Start Time:" "$START_LOCAL (Thai Time)"
-show_kv "End Time:" "$END_LOCAL (Thai Time)"
+END_LOCAL="$(date -d @"$(( START_EPOCH + ADD_SECS ))" "+%I:%M %p")"
+show_success "Expire Time set to: $END_LOCAL"
 
-# =================== Step 6: Create SSH Proxy Server ===================
-show_step "03" "Building Custom SSH WS Server"
-
-BUILD_DIR=$(mktemp -d)
-cd "$BUILD_DIR"
-
-SSH_USER="fnet"
-SSH_PASS="fnet"
-
-# Create Python WebSocket to TCP Proxy
+# =================== Step 3: Build Server ===================
+show_step "03" "Building SSH WS Proxy Server"
+BUILD_DIR=$(mktemp -d); cd "$BUILD_DIR"
 cat << 'EOF' > proxy.py
-import asyncio
-import websockets
-
+import asyncio, websockets
 async def forward(websocket, path):
-    try:
-        reader, writer = await asyncio.open_connection('127.0.0.1', 22)
-    except Exception as e:
-        return
-
+    try: reader, writer = await asyncio.open_connection('127.0.0.1', 22)
+    except: return
     async def ws_to_tcp():
         try:
-            async for message in websocket:
-                writer.write(message)
-                await writer.drain()
-        except Exception: pass
+            async for message in websocket: writer.write(message); await writer.drain()
+        except: pass
         finally: writer.close()
-
     async def tcp_to_ws():
         try:
             while True:
                 data = await reader.read(4096)
                 if not data: break
                 await websocket.send(data)
-        except Exception: pass
+        except: pass
         finally: await websocket.close()
-
     await asyncio.gather(ws_to_tcp(), tcp_to_ws())
-
 start_server = websockets.serve(forward, "0.0.0.0", 8080)
-asyncio.get_event_loop().run_until_complete(start_server)
-asyncio.get_event_loop().run_forever()
+asyncio.get_event_loop().run_until_complete(start_server); asyncio.get_event_loop().run_forever()
 EOF
 
-# Create Startup Script
-cat << 'EOF' > entrypoint.sh
-#!/bin/bash
-/usr/sbin/sshd
-python3 /app/proxy.py
-EOF
-chmod +x entrypoint.sh
-
-# Create Dockerfile
-cat << EOF > Dockerfile
+cat << 'EOF' > Dockerfile
 FROM alpine:latest
-WORKDIR /app
 RUN apk add --no-cache openssh python3 py3-websockets bash
-RUN ssh-keygen -A && \\
-    echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \\
-    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \\
-    adduser -D -s /bin/bash ${SSH_USER} && \\
-    echo "${SSH_USER}:${SSH_PASS}" | chpasswd
+RUN ssh-keygen -A && echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
+    echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
+    adduser -D -s /bin/bash fnet && echo "fnet:fnet" | chpasswd
 COPY proxy.py /app/proxy.py
-COPY entrypoint.sh /app/entrypoint.sh
 EXPOSE 8080
-CMD ["/app/entrypoint.sh"]
+CMD ["/bin/bash", "-c", "/usr/sbin/sshd && python3 /app/proxy.py"]
 EOF
 
-show_success "SSH Proxy Server files generated successfully."
-
-# =================== Step 7: Enable APIs & Deploy ===================
+# =================== Step 4: Deploy ===================
 show_step "04" "Cloud Run Deployment"
-gcloud services list --enabled --filter="config.name:run.googleapis.com" | grep -q "run.googleapis.com" || gcloud services enable run.googleapis.com --quiet
+SERVICE="fnet-ssh-ws-$(date +%s)"
+REGION="us-central1"
 
-show_info "Deploying FNET SSH WS Server..."
-DEPLOY_CMD=(
-  gcloud run deploy "$SERVICE"
-  --source="."
-  --platform=managed
-  --region="$REGION"
-  --memory="512Mi"
-  --cpu="1"
-  --concurrency=1000
-  --allow-unauthenticated
-  --port=8080
-  --min-instances=1
-  --quiet
-)
-run_with_progress "Deploying ${SERVICE} to Cloud Run" "${DEPLOY_CMD[@]}"
-rm -rf "$BUILD_DIR"
+run_with_progress "Deploying Server to Cloud Run" \
+  gcloud run deploy "$SERVICE" --source="." --region="$REGION" --platform=managed --allow-unauthenticated --port=8080 --quiet
 
-# =================== Step 8: Result ===================
-SERVICE_URL=$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)' 2>/dev/null || true)
-if [[ -z "$SERVICE_URL" ]]; then SERVICE_URL="https://${SERVICE}-${PROJECT_NUMBER}.${REGION}.run.app"; fi
-HOST_URL=$(basename ${SERVICE_URL#https://})
+# URL အစစ်ကို တိုက်ရိုက်ဆွဲယူခြင်း (ဒီတစ်ခါ လုံးဝ မမှားတော့ပါ)
+SERVICE_URL=$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')
+HOST_URL=$(echo "$SERVICE_URL" | sed 's/https:\/\///')
 
-printf "\n${C_FNET_YELLOW}┌──────────────────────────────────────────────────────┐${RESET}\n"
-printf "${C_FNET_YELLOW}│${RESET} ${C_FNET_CYAN}✅ SSH WS Deployment Successful${RESET}                        ${C_FNET_YELLOW}│${RESET}\n"
-printf "${C_FNET_YELLOW}└──────────────────────────────────────────────────────┘${RESET}\n\n"
+# =================== Step 5: Final Result & Telegram ===================
+show_step "05" "Deployment Finished"
 
-printf "${C_FNET_GREEN}${BOLD}🔑 SSH WS ACCOUNT DETAILS:${RESET}\n"
-show_kv "IP / Host:" "vpn.googleapis.com"
+PAYLOAD="GET / HTTP/1.1[crlf]Host: ${HOST_URL}[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]"
+
+# Screen Output
+show_kv "Host:" "vpn.googleapis.com"
 show_kv "Port:" "443"
-show_kv "Username:" "${SSH_USER}"
-show_kv "Password:" "${SSH_PASS}"
-show_kv "SNI/Bug Host:" "vpn.googleapis.com"
-show_divider
+show_kv "User/Pass:" "fnet / fnet"
+show_kv "Payload:" "$PAYLOAD"
 
-printf "${C_FNET_GREEN}${BOLD}📋 HTTP CUSTOM / INJECTOR PAYLOAD:${RESET}\n"
-printf "${C_FNET_CYAN}GET wss://vpn.googleapis.com/ HTTP/1.1[crlf]Host: ${HOST_URL}[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]${RESET}\n"
-show_divider
+# Telegram Output (စာတွေကို နှိပ်လိုက်ရင် Auto-copy ဖြစ်အောင် လုပ်ထားပေးပါတယ်)
+MSG=$(cat <<EOF
+✅ <b>FNET SSH WS Deployed</b>
+━━━━━━━━━━━━━━━━━━
+🌍 <b>Host:</b> <code>vpn.googleapis.com</code>
+🔌 <b>Port:</b> <code>443</code>
+👤 <b>User:</b> <code>fnet</code>
+🔑 <b>Pass:</b> <code>fnet</code>
+🛡️ <b>SNI:</b> <code>vpn.googleapis.com</code>
 
-printf "\n${C_FNET_RED}${BOLD}F N E T${RESET} ${C_FNET_GRAY}|${RESET} ${C_FNET_CYAN}SSH WebSocket Deployment System${RESET} ${C_FNET_GRAY}|${RESET} ${C_FNET_GREEN}v1.0${RESET}\n"
-printf "${C_FNET_GRAY}──────────────────────────────────────────────────────────${RESET}\n\n"
+📋 <b>PAYLOAD:</b>
+<code>${PAYLOAD}</code>
+
+⏳ <b>Expires at:</b> ${END_LOCAL}
+━━━━━━━━━━━━━━━━━━
+EOF
+)
+tg_send "$MSG"
+show_success "Telegram message sent! Please check your bot."
+rm -rf "$BUILD_DIR"
