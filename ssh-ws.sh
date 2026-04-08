@@ -38,7 +38,7 @@ show_fnet_banner() {
   printf "║   ██║     ██║ ╚████║███████╗   ██║        ╚████╔╝ ██║     ██║ ╚████║ ║\n"
   printf "║   ╚═╝     ╚═╝  ╚═══╝╚══════╝   ╚═╝         ╚═══╝  ╚═╝     ╚═╝  ╚═══╝ ║\n"
   printf "║                                                                  ║\n"
-  printf "║         ${C_FNET_YELLOW}🚀 SSH WS (ULTIMATE EDITION) => VERSION - 3.0          ${C_FNET_RED}║\n"
+  printf "║         ${C_FNET_YELLOW}🚀 SSH WS (STABLE EDITION) => VERSION - 3.1            ${C_FNET_RED}║\n"
   printf "║         ${C_FNET_GREEN}⚡ Powered by FNET Developer                           ${C_FNET_RED}║\n"
   printf "╚══════════════════════════════════════════════════════════════════╝${RESET}\n\n"
 }
@@ -110,107 +110,83 @@ for api in "${APIS_TO_ENABLE[@]}"; do
 done
 show_success "Required APIs enabled successfully."
 
-# =================== Step 4: Build Ultimate Server ===================
-show_step "04" "Building Ultimate SSH Server (UDPGW + Threading)"
+# =================== Step 4: Build Server ===================
+show_step "04" "Building Stable SSH Proxy Server"
 BUILD_DIR=$(mktemp -d); cd "$BUILD_DIR"
 
-# Threading-based Unbreakable Python Proxy
+# Stable Asyncio Python Proxy
 cat << 'EOF' > proxy.py
-import socket, threading, os
+import asyncio, os
 
-def forward(source, destination):
-    try:
-        while True:
-            data = source.recv(8192)
-            if not data: break
-            destination.sendall(data)
-    except: pass
-    finally:
-        try: source.shutdown(socket.SHUT_RDWR)
-        except: pass
-        source.close()
-        try: destination.shutdown(socket.SHUT_RDWR)
-        except: pass
-        destination.close()
-
-def handle_client(client):
+async def handle_client(reader, writer):
     try:
         req = b""
         while b"\r\n\r\n" not in req:
-            chunk = client.recv(4096)
+            chunk = await reader.read(4096)
             if not chunk: break
             req += chunk
+        
+        writer.write(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
+        await writer.drain()
 
-        client.sendall(b"HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n")
-
-        ssh = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        ssh.connect(('127.0.0.1', 22))
+        ssh_reader, ssh_writer = await asyncio.open_connection('127.0.0.1', 22)
 
         parts = req.split(b"\r\n\r\n", 1)
         if len(parts) > 1 and len(parts[1]) > 0:
-            ssh.sendall(parts[1])
+            ssh_writer.write(parts[1])
+            await ssh_writer.drain()
 
-        t1 = threading.Thread(target=forward, args=(client, ssh))
-        t2 = threading.Thread(target=forward, args=(ssh, client))
-        t1.start()
-        t2.start()
-    except:
-        client.close()
+        async def pipe(r, w):
+            try:
+                while True:
+                    data = await r.read(8192)
+                    if not data: break
+                    w.write(data)
+                    await w.drain()
+            except Exception: pass
+            finally: w.close()
 
-def main():
+        await asyncio.gather(pipe(reader, ssh_writer), pipe(ssh_reader, writer))
+    except Exception:
+        pass
+    finally:
+        writer.close()
+
+async def main():
     port = int(os.environ.get("PORT", 8080))
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind(('0.0.0.0', port))
-    server.listen(100)
-    while True:
-        client, _ = server.accept()
-        threading.Thread(target=handle_client, args=(client,)).start()
+    server = await asyncio.start_server(handle_client, '0.0.0.0', port)
+    async with server:
+        await server.serve_forever()
 
-if __name__ == '__main__':
-    main()
+if __name__ == "__main__":
+    asyncio.run(main())
 EOF
 
-# Dockerfile with BadVPN-UDPGW builder included
 cat << 'EOF' > Dockerfile
-FROM alpine:latest AS builder
-RUN apk add --no-cache build-base cmake git
-RUN git clone https://github.com/ambrop72/badvpn.git /badvpn && \
-    cd /badvpn && mkdir build && cd build && \
-    cmake .. -DBUILD_NOTHING_BY_DEFAULT=1 -DBUILD_UDPGW=1 && \
-    make install
-
 FROM alpine:latest
 RUN apk add --no-cache openssh python3 bash
-COPY --from=builder /usr/local/bin/badvpn-udpgw /usr/local/bin/badvpn-udpgw
 RUN ssh-keygen -A && \
     echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
     echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config && \
-    echo "GatewayPorts yes" >> /etc/ssh/sshd_config && \
-    echo "PermitTunnel yes" >> /etc/ssh/sshd_config && \
-    echo "UseDNS no" >> /etc/ssh/sshd_config && \
     adduser -D -s /bin/bash fnet && echo "fnet:fnet" | chpasswd
 COPY proxy.py /app/proxy.py
 EXPOSE 8080
-CMD ["/bin/bash", "-c", "badvpn-udpgw --listen-addr 127.0.0.1:7300 --max-clients 1000 --max-connections-for-client 10 >/dev/null 2>&1 & /usr/sbin/sshd && python3 /app/proxy.py"]
+CMD ["/bin/bash", "-c", "/usr/sbin/sshd && python3 /app/proxy.py"]
 EOF
 
-# =================== Step 5: Deploy (Gen 2 Fix) ===================
-show_step "05" "Cloud Run Deployment (Gen 2 Environment)"
+# =================== Step 5: Deploy ===================
+show_step "05" "Cloud Run Deployment"
 SERVICE="fnet-ssh-ws-$(date +%s)"
 REGION="us-central1"
 
-# UDPGW ပါဝင်တဲ့အတွက် တည်ဆောက်ချိန် အနည်းငယ် ပိုကြာနိုင်ပါတယ်။
-run_with_progress "Deploying Gen-2 Server to Cloud Run" \
+run_with_progress "Deploying Server to Cloud Run" \
   gcloud run deploy "$SERVICE" \
   --source="." \
   --region="$REGION" \
   --platform=managed \
   --allow-unauthenticated \
   --port=8080 \
-  --execution-environment=gen2 \
-  --timeout=3600 \
   --quiet
 
 # =================== Step 6: Fetching Cloud Run URL ===================
@@ -246,7 +222,7 @@ show_kv "Payload:" "$PAYLOAD"
 
 # Telegram Output
 MSG=$(cat <<EOF
-✅ <b>FNET SSH WS (V3.0) Deployed</b>
+✅ <b>FNET SSH WS Deployed</b>
 ━━━━━━━━━━━━━━━━━━
 🌍 <b>Host:</b> <code>vpn.googleapis.com</code>
 🔌 <b>Port:</b> <code>443</code>
@@ -259,7 +235,6 @@ MSG=$(cat <<EOF
 
 ⏳ <b>Expires at:</b> ${END_LOCAL}
 ━━━━━━━━━━━━━━━━━━
-<b>UDPGW (Port 7300) Enabled for DNS/Games!</b>
 EOF
 )
 tg_send "$MSG"
