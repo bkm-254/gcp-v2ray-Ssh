@@ -38,7 +38,7 @@ show_fnet_banner() {
   printf "║   ██║     ██║ ╚████║███████╗   ██║        ╚████╔╝ ██║     ██║ ╚████║ ║\n"
   printf "║   ╚═╝     ╚═╝  ╚═══╝╚══════╝   ╚═╝         ╚═══╝  ╚═╝     ╚═╝  ╚═══╝ ║\n"
   printf "║                                                                  ║\n"
-  printf "║         ${C_FNET_YELLOW}🚀 SSH over WEBSOCKET SYSTEM => VERSION - 2.0          ${C_FNET_RED}║\n"
+  printf "║         ${C_FNET_YELLOW}🚀 SSH over WEBSOCKET SYSTEM => VERSION - 2.1          ${C_FNET_RED}║\n"
   printf "║         ${C_FNET_GREEN}⚡ Powered by FNET Developer                           ${C_FNET_RED}║\n"
   printf "╚══════════════════════════════════════════════════════════════════╝${RESET}\n\n"
 }
@@ -145,12 +145,28 @@ REGION="us-central1"
 run_with_progress "Deploying Server to Cloud Run" \
   gcloud run deploy "$SERVICE" --source="." --region="$REGION" --platform=managed --allow-unauthenticated --port=8080 --quiet
 
-# URL အစစ်ကို တိုက်ရိုက်ဆွဲယူခြင်း (ဒီတစ်ခါ လုံးဝ မမှားတော့ပါ)
-SERVICE_URL=$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)')
-HOST_URL=$(echo "$SERVICE_URL" | sed 's/https:\/\///')
+# =================== Step 5: GET ACTUAL URL (RETRY LOOP) ===================
+show_step "05" "Fetching Cloud Run URL"
+show_info "Waiting for Google to assign URL..."
+SERVICE_URL=""
+for i in {1..15}; do
+  SERVICE_URL=$(gcloud run services describe "$SERVICE" --region="$REGION" --format='value(status.url)' 2>/dev/null || true)
+  if [[ -n "$SERVICE_URL" ]]; then
+    break
+  fi
+  sleep 3
+done
 
-# =================== Step 5: Final Result & Telegram ===================
-show_step "05" "Deployment Finished"
+if [[ -z "$SERVICE_URL" ]]; then
+  show_error "URL ကို ဆွဲယူလို့ မရပါ။ Cloud Console ထဲတွင် သွားရောက်ကူးယူပါ။"
+  exit 1
+fi
+
+HOST_URL=$(echo "$SERVICE_URL" | sed 's#^https://##; s#/$##')
+show_success "URL fetched: $HOST_URL"
+
+# =================== Step 6: Final Result & Telegram ===================
+show_step "06" "Deployment Finished"
 
 PAYLOAD="GET / HTTP/1.1[crlf]Host: ${HOST_URL}[crlf]Upgrade: websocket[crlf]Connection: Upgrade[crlf][crlf]"
 
@@ -160,7 +176,7 @@ show_kv "Port:" "443"
 show_kv "User/Pass:" "fnet / fnet"
 show_kv "Payload:" "$PAYLOAD"
 
-# Telegram Output (စာတွေကို နှိပ်လိုက်ရင် Auto-copy ဖြစ်အောင် လုပ်ထားပေးပါတယ်)
+# Telegram Output
 MSG=$(cat <<EOF
 ✅ <b>FNET SSH WS Deployed</b>
 ━━━━━━━━━━━━━━━━━━
