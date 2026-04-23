@@ -166,6 +166,8 @@ cat << 'EOF' > Dockerfile
 FROM alpine:latest
 RUN apk add --no-cache openssh python3 bash
 RUN ssh-keygen -A && \
+    echo "KexAlgorithms curve25519-sha256@libssh.org,ecdh-sha2-nistp256,diffie-hellman-group14-sha1" >> /etc/ssh/sshd_config && \
+    echo "HostKeyAlgorithms +ssh-rsa" >> /etc/ssh/sshd_config && \
     echo "PermitRootLogin yes" >> /etc/ssh/sshd_config && \
     echo "PasswordAuthentication yes" >> /etc/ssh/sshd_config && \
     echo "AllowTcpForwarding yes" >> /etc/ssh/sshd_config && \
